@@ -57,6 +57,8 @@ def build_audio_cmd(options):
     elif options.codec_index == 2:
         parts.extend(["--sbr", "--ps"])
 
+    output_flag = "-e" if _is_edi_uri(options.zmq_out) else "-o"
+
     parts.extend(
         [
             "-l",
@@ -73,7 +75,7 @@ def build_audio_cmd(options):
             str(int(options.gain)),
             "-s",
             str(options.silence if options.silence > 0 else 180),
-            "-o",
+            output_flag,
             options.zmq_out,
         ]
     )
@@ -172,3 +174,10 @@ def _bar_percent(bar):
         return 0
     active = sum(1 for char in bar if char in "=-")
     return int(active * 100 / len(bar))
+
+
+def _is_edi_uri(uri):
+    try:
+        return (urlparse(uri or "").scheme or "").lower() == "udp"
+    except Exception:
+        return False
