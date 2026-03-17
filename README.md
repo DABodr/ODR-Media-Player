@@ -35,6 +35,20 @@ It can also generate and manage:
 - PAD / SLS throughput estimate
 - Debian menu integration when installed from the `.deb`
 
+## Screenshots
+
+### Player
+
+![Player](img/player.png)
+
+### PAD / DLS
+
+![PAD / DLS](img/pad.png)
+
+### Output
+
+![Output](img/encoder.png)
+
 ## Runtime chain
 
 ```text
