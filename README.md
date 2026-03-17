@@ -47,7 +47,7 @@ It can also generate and manage:
 
 ### Output
 
-![Output](img/encoder.png)
+![Output](img/output.png)
 
 ## Runtime chain
 
