@@ -2525,7 +2525,7 @@ class ODRFilePlayer(Gtk.Window):
                 track_override=track_override,
                 allow_placeholder=True,
             )
-            if self.chk_sls_title_card.get_active():
+            if self.chk_sls_title_card.get_active() and current_track is not None:
                 self.sls_title_card_preview_path = preview_path
                 self.sls_title_card_preview_tooltip = self._describe_slide_file_markup(
                     preview_path,
