@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=ODR Media Player
+GenericName=Audio playout and DAB+ encoder frontend
+Comment=Play audio files, streams and live inputs for ODR AudioEnc / PADEnc
+Exec=odr-media-player
+Icon=odr-media-player
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=DAB;radio;audio;player;encoder;stream;playlist;
+StartupNotify=true

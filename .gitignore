@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+
+.claude/
+
+dist/
+
+.venv/
+venv/
+
+.DS_Store

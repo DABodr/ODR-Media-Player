@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_DIR="/usr/share/odr-media-player"
+
+cd "$APP_DIR"
+exec python3 "$APP_DIR/odr_fileplayer.py" "$@"
