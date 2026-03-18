@@ -79,6 +79,11 @@ def detect_loop_card():
     return -1
 
 
+def should_ignore_audio_file(path):
+    filename = os.path.basename((path or "").strip())
+    return bool(filename) and filename.startswith("._")
+
+
 def probe_audio_tags(path):
     artist = ""
     title = os.path.splitext(os.path.basename(path))[0]
@@ -143,7 +148,11 @@ def list_audio_files(folder):
         text=True,
         timeout=30,
     )
-    return [line.strip() for line in out.splitlines() if line.strip()]
+    return [
+        line.strip()
+        for line in out.splitlines()
+        if line.strip() and not should_ignore_audio_file(line.strip())
+    ]
 
 
 def load_playlist_entries(path):

@@ -33,8 +33,11 @@ class AppConfig:
     shuffle: bool = False
     repeat: bool = False
     local_monitor: bool = False
+    watch_loaded_folders: bool = True
     last_logo_dir: str = ""
     playlist: list[str] = field(default_factory=list)
+    playlist_folder_roots: list[str] = field(default_factory=list)
+    playlist_group_states: dict[str, bool] = field(default_factory=dict)
     playlist_overrides: dict[str, dict] = field(default_factory=dict)
 
     @classmethod
@@ -66,8 +69,11 @@ class AppConfig:
             shuffle=settings.get("Shuffle", "0") == "1",
             repeat=settings.get("Repeat", "0") == "1",
             local_monitor=settings.get("LocalMonitor", "0") == "1",
+            watch_loaded_folders=settings.get("WatchLoadedFolders", "1") == "1",
             last_logo_dir=settings.get("LastLogoDir", ""),
             playlist=list(playlist),
+            playlist_folder_roots=_load_playlist_folder_roots(settings.get("PlaylistFolderRoots", "")),
+            playlist_group_states=_load_playlist_group_states(settings.get("PlaylistGroupStates", "")),
             playlist_overrides=_load_playlist_overrides(settings.get("PlaylistOverrides", "")),
         )
 
@@ -98,7 +104,10 @@ class AppConfig:
             "Shuffle": "1" if self.shuffle else "0",
             "Repeat": "1" if self.repeat else "0",
             "LocalMonitor": "1" if self.local_monitor else "0",
+            "WatchLoadedFolders": "1" if self.watch_loaded_folders else "0",
             "LastLogoDir": self.last_logo_dir,
+            "PlaylistFolderRoots": _dump_playlist_folder_roots(self.playlist_folder_roots),
+            "PlaylistGroupStates": _dump_playlist_group_states(self.playlist_group_states),
             "PlaylistOverrides": _dump_playlist_overrides(self.playlist_overrides),
         }
         return settings, list(self.playlist), list(self.sls_logos)
@@ -133,10 +142,73 @@ def _load_playlist_overrides(value):
     return normalized
 
 
+def _load_playlist_group_states(value):
+    payload = (value or "").strip()
+    if not payload:
+        return {}
+    try:
+        data = json.loads(payload)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    normalized = {}
+    for key, item in data.items():
+        normalized[str(key)] = bool(item)
+    return normalized
+
+
+def _load_playlist_folder_roots(value):
+    payload = (value or "").strip()
+    if not payload:
+        return []
+    try:
+        data = json.loads(payload)
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    roots = []
+    seen = set()
+    for item in data:
+        path = str(item or "").strip()
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        roots.append(path)
+    return roots
+
+
 def _dump_playlist_overrides(value):
     if not value:
         return ""
     try:
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        return ""
+
+
+def _dump_playlist_group_states(value):
+    if not value:
+        return ""
+    try:
+        return json.dumps({str(key): bool(item) for key, item in value.items()}, separators=(",", ":"))
+    except Exception:
+        return ""
+
+
+def _dump_playlist_folder_roots(value):
+    if not value:
+        return ""
+    try:
+        roots = []
+        seen = set()
+        for item in value:
+            path = str(item or "").strip()
+            if not path or path in seen:
+                continue
+            seen.add(path)
+            roots.append(path)
+        return json.dumps(roots, ensure_ascii=False, separators=(",", ":"))
     except Exception:
         return ""

@@ -31,7 +31,7 @@ def _append_tab(owner, child, title, scrollable=False):
 def _build_headerbar(owner):
     hb = Gtk.HeaderBar()
     hb.set_show_close_button(True)
-    hb.set_title("ODR Media Player")
+    hb.set_title("ODR Media Player V1.1")
 
     owner.set_titlebar(hb)
 
@@ -42,16 +42,29 @@ def _build_tab_lecteur(owner):
     scroll = Gtk.ScrolledWindow()
     scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
     scroll.set_shadow_type(Gtk.ShadowType.IN)
-    owner.store_pl = Gtk.ListStore(int, str, bool)
+    owner.store_pl = Gtk.TreeStore(int, str, str, bool, bool, bool)
     owner.tv_pl = Gtk.TreeView(model=owner.store_pl)
-    renderer = Gtk.CellRendererText()
-    renderer.set_property("background", "#3584e4")
-    renderer.set_property("foreground", "white")
-    col = Gtk.TreeViewColumn("Track", renderer, text=1, background_set=2, foreground_set=2)
+    toggle_renderer = Gtk.CellRendererToggle()
+    toggle_renderer.connect("toggled", owner.on_playlist_group_toggled)
+    toggle_col = Gtk.TreeViewColumn("", toggle_renderer)
+    toggle_col.set_sizing(Gtk.TreeViewColumnSizing.FIXED)
+    toggle_col.set_fixed_width(34)
+    toggle_col.set_cell_data_func(toggle_renderer, owner._playlist_toggle_cell_data)
+    owner.tv_pl.append_column(toggle_col)
+
+    text_renderer = Gtk.CellRendererText()
+    text_renderer.set_property("ellipsize", 3)
+    col = Gtk.TreeViewColumn("Track", text_renderer)
+    col.set_cell_data_func(text_renderer, owner._playlist_text_cell_data)
     owner.tv_pl.append_column(col)
+    owner.tv_pl.set_expander_column(col)
     owner.tv_pl.set_headers_visible(False)
+    owner.tv_pl.set_reorderable(True)
     owner.tv_pl.get_selection().set_mode(Gtk.SelectionMode.MULTIPLE)
     owner.tv_pl.connect("row-activated", owner._on_pl_dblclick)
+    owner.tv_pl.connect("row-expanded", owner.on_playlist_row_expanded)
+    owner.tv_pl.connect("row-collapsed", owner.on_playlist_row_collapsed)
+    owner.store_pl.connect("rows-reordered", owner.on_playlist_rows_reordered)
     scroll.add(owner.tv_pl)
 
     owner.player_stack = Gtk.Stack()
@@ -68,11 +81,13 @@ def _build_tab_lecteur(owner):
     empty_title = Gtk.Label(xalign=0.5)
     empty_title.set_use_markup(True)
     empty_title.set_markup("<b>No tracks loaded</b>")
+    owner.player_empty_title = empty_title
     empty_box.pack_start(empty_title, False, False, 0)
 
     empty_hint = Gtk.Label(xalign=0.5)
     empty_hint.set_use_markup(True)
-    empty_hint.set_markup("<i>Use Add or Folder to build the playlist.</i>")
+    empty_hint.set_markup("<i>Use Add or Folder to build grouped music folders.</i>")
+    owner.player_empty_hint = empty_hint
     empty_box.pack_start(empty_hint, False, False, 0)
 
     owner.player_stack.add_named(empty_box, "empty")
@@ -80,6 +95,7 @@ def _build_tab_lecteur(owner):
     vbox.pack_start(owner.player_stack, True, True, 0)
 
     hb = Gtk.Box(spacing=4)
+    owner.player_actions_bar = hb
     for label, cb in [
         ("Add", owner.on_add_files),
         ("Add playlist", owner.on_add_playlist),
@@ -96,6 +112,7 @@ def _build_tab_lecteur(owner):
         button = Gtk.Button(label=label)
         button.connect("clicked", cb)
         hb.pack_start(button, False, False, 0)
+
     vbox.pack_start(hb, False, False, 0)
 
     _append_tab(owner, vbox, "  Player  ")
@@ -107,10 +124,20 @@ def _build_player_strip(owner):
     content.set_border_width(8)
     frame.add(content)
 
+    owner.scale_player_seek = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+    owner.scale_player_seek.set_draw_value(False)
+    owner.scale_player_seek.set_hexpand(True)
+    owner.scale_player_seek.set_sensitive(False)
+    owner.scale_player_seek.connect("button-press-event", owner.on_player_seek_press)
+    owner.scale_player_seek.connect("button-release-event", owner.on_player_seek_release)
+    owner.scale_player_seek.connect("value-changed", owner.on_player_seek_value_changed)
+    content.pack_start(owner.scale_player_seek, False, False, 0)
+
     now_row = Gtk.Box(spacing=8)
 
     owner.lbl_now = Gtk.Label(label="—")
     owner.lbl_now.set_xalign(0)
+    owner.lbl_now.set_use_markup(True)
     owner.lbl_now.set_ellipsize(3)
     owner.lbl_now.set_hexpand(False)
     now_row.pack_start(owner.lbl_now, False, False, 0)
@@ -122,9 +149,16 @@ def _build_player_strip(owner):
     owner.lbl_now_countdown.set_margin_start(10)
     now_row.pack_start(owner.lbl_now_countdown, False, False, 0)
 
+    owner.lbl_now_retry = Gtk.Label(label="")
+    owner.lbl_now_retry.set_xalign(0)
+    owner.lbl_now_retry.set_use_markup(True)
+    owner.lbl_now_retry.set_no_show_all(True)
+    now_row.pack_start(owner.lbl_now_retry, False, False, 0)
+
     content.pack_start(now_row, False, False, 0)
 
     controls_row = Gtk.Box(spacing=8)
+    controls_row.set_margin_top(4)
 
     transport = Gtk.Box(spacing=4)
     owner.btn_prev = Gtk.Button(label="◀◀")
@@ -250,7 +284,7 @@ def _build_encoding_panel(owner):
     add_inline(row2, "Output", owner.cmb_output_proto)
     add_inline(row2, "URL", owner.txt_output_host)
     add_inline(row2, "Port", owner.spn_output_port)
-    add_inline(row2, "Silence", owner.spn_silence)
+    add_inline(row2, "Silence warn", owner.spn_silence)
 
     return frame
 

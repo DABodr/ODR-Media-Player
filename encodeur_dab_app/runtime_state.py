@@ -28,6 +28,14 @@ class RuntimeState:
     stopping_audio: bool = False
     stopping_pad: bool = False
     restart_pending: bool = False
+    last_audioenc_data_at: float = 0.0
+    silence_started_at: float = 0.0
+    silence_warning_active: bool = False
+    silence_warning_kind: str = ""
+    player_recovery_attempted: bool = False
+    player_recovery_path: str = ""
+    player_recovery_last_attempt_at: float = 0.0
+    player_recovery_count: int = 0
 
     def reset_player_vu(self):
         self.player_vu_left = 0
@@ -41,3 +49,15 @@ class RuntimeState:
         self.stream_station_name = ""
         self.stream_codec = ""
         self.stream_bitrate = ""
+
+    def reset_silence_state(self):
+        self.last_audioenc_data_at = 0.0
+        self.silence_started_at = 0.0
+        self.silence_warning_active = False
+        self.silence_warning_kind = ""
+
+    def reset_player_recovery(self):
+        self.player_recovery_attempted = False
+        self.player_recovery_path = ""
+        self.player_recovery_last_attempt_at = 0.0
+        self.player_recovery_count = 0

@@ -48,7 +48,10 @@ def write_flat_config(path, settings, playlist):
         "Shuffle",
         "Repeat",
         "LocalMonitor",
+        "WatchLoadedFolders",
         "LastLogoDir",
+        "PlaylistFolderRoots",
+        "PlaylistGroupStates",
         "PlaylistOverrides",
     ]
 
@@ -124,7 +127,10 @@ def _read_ini_config(path):
         "shuffle": "Shuffle",
         "repeat": "Repeat",
         "localmonitor": "LocalMonitor",
+        "watchloadedfolders": "WatchLoadedFolders",
         "lastlogodir": "LastLogoDir",
+        "playlistfolderroots": "PlaylistFolderRoots",
+        "playlistgroupstates": "PlaylistGroupStates",
         "playlistoverrides": "PlaylistOverrides",
     }
 

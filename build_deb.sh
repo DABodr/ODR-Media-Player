@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_NAME="odr-media-player"
-PKG_VERSION="${1:-1.0.0}"
+PKG_VERSION="${1:-1.1.0}"
 PKG_ARCH="all"
 DIST_DIR="$ROOT_DIR/dist"
 BUILD_DIR="$DIST_DIR/build"

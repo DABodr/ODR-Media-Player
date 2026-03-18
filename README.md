@@ -1,4 +1,4 @@
-# ODR Media Player
+# ODR Media Player V1.1
 
 `ODR Media Player` is a GTK3 desktop frontend for a local DAB+ playout and encoding chain based on:
 
@@ -26,14 +26,33 @@ It can also generate and manage:
 ## Features
 
 - Persistent `Now Playing` strip visible from every tab
-- Playlist management with multi-selection
+- Seek bar for local-file playback directly from the `Now Playing` strip
+- Grouped playlist by music folder, with per-folder enable/disable state
+- Playlist multi-selection for grouped remove / move operations
+- Drag-and-drop reordering for folders and tracks
+- Automatic folder watching for newly added local audio files
 - Stream metadata parsing from GStreamer tags
+- Live app-audio titling fallback from the captured application/window when available
 - App-audio and audio-input capture
 - Encoder control for `odr-audioenc` and `odr-padenc`
 - `ZMQ (tcp)` or `EDI (udp)` output modes
+- Informational silence / no-data warning without stopping the encoder chain
+- Automatic retry of live sources when audio disappears
 - Internal logo library for SLS
+- Generated title cards with adaptive text layout
+- Optional local cover-art usage and optional online cover-art lookup
+- Cover-only slideshow rendering when real artwork is found
 - PAD / SLS throughput estimate
 - Debian menu integration when installed from the `.deb`
+
+## V1.1 Highlights
+
+- Folder-based player view with automatic detection of new tracks in watched music folders
+- Direct seek control for local tracks
+- Better live-source supervision with retry counter and non-blocking silence warnings
+- Output preview aligned with the real `odr-padenc` slideshow state
+- `EDI (udp)` output support corrected for `odr-audioenc`
+- Updated Debian package build for `1.1.0`
 
 ## Screenshots
 
@@ -72,7 +91,7 @@ DLS / DL+ / SLS
 If you already built the package:
 
 ```bash
-sudo apt install ./dist/odr-media-player_1.0.0_all.deb
+sudo apt install ./dist/odr-media-player_1.1.0_all.deb
 ```
 
 This installs:
@@ -189,7 +208,7 @@ DISPLAY=:0 python3 odr_fileplayer.py
 Output:
 
 ```text
-dist/odr-media-player_1.0.0_all.deb
+dist/odr-media-player_1.1.0_all.deb
 ```
 
 ## Configuration and runtime files
@@ -219,7 +238,9 @@ App data:
 
 - The app is designed for a real encoder chain, so `Start`, `Restart encoder` and `Stop` act on real processes.
 - `Local monitor` only duplicates audio locally and does not replace the encoder path.
+- Local folder groups stay monitored automatically after import; new audio files can appear in the playlist a few seconds later after background probing.
 - Online cover-art lookup depends on metadata quality and may be imperfect for remixes or noisy stream titles.
+- Silence detection is informational only. It does not stop `odr-audioenc` or `odr-padenc`.
 - For slideshow reception tests, graphical receivers such as `dablin_gtk` are more useful than console-only players.
 
 ## License

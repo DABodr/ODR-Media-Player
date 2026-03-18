@@ -73,8 +73,6 @@ def build_audio_cmd(options):
             (options.samplerate_text or "48000 Hz")[:5],
             "-g",
             str(int(options.gain)),
-            "-s",
-            str(options.silence if options.silence > 0 else 180),
             output_flag,
             options.zmq_out,
         ]
