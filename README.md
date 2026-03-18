@@ -31,6 +31,7 @@ It can also generate and manage:
 - Playlist multi-selection for grouped remove / move operations
 - Drag-and-drop reordering for folders and tracks
 - Automatic folder watching for newly added local audio files
+- Saved playlist loading in background with progressive UI population at startup
 - Stream metadata parsing from GStreamer tags
 - Live app-audio titling fallback from the captured application/window when available
 - App-audio and audio-input capture
@@ -71,17 +72,21 @@ It can also generate and manage:
 ## Runtime chain
 
 ```text
-Files / URLs / App audio / Audio input
-  -> GStreamer
-  -> ALSA Loopback
-  -> odr-audioenc
-  -> ZMQ (tcp) or EDI (udp)
-  -> external / remote odr-dabmux
+Audio path
+  Files / URLs / App audio / Audio input
+    -> GStreamer decode / playback
+    -> ALSA Loopback playback side (hw:N,0)
+    -> ALSA Loopback capture side (hw:N,1)
+    -> odr-audioenc
+    -> output transport: ZMQ (tcp://...) or EDI (udp://...)
+    -> local / remote odr-dabmux input
 
-DLS / DL+ / SLS
-  -> odr-padenc
-  -> Unix socket
-  -> injected into odr-audioenc
+PAD / metadata path (when enabled)
+  Default DLS / file metadata / DL+ / generated slides / logo library
+    -> DLS file + slideshow assets
+    -> odr-padenc
+    -> PAD socket identified by the PAD ID
+    -> injected into odr-audioenc
 ```
 
 ## Installation
@@ -139,6 +144,8 @@ sudo apt install \
   imagemagick \
   kmod
 ```
+
+If your desktop uses PipeWire instead of PulseAudio tools, install `pipewire-bin` as a compatible alternative for `pactl`.
 
 Then install:
 
@@ -239,6 +246,7 @@ App data:
 - The app is designed for a real encoder chain, so `Start`, `Restart encoder` and `Stop` act on real processes.
 - `Local monitor` only duplicates audio locally and does not replace the encoder path.
 - Local folder groups stay monitored automatically after import; new audio files can appear in the playlist a few seconds later after background probing.
+- Saved playlists are restored progressively at startup; the UI may become usable before all local file metadata is loaded.
 - Online cover-art lookup depends on metadata quality and may be imperfect for remixes or noisy stream titles.
 - Silence detection is informational only. It does not stop `odr-audioenc` or `odr-padenc`.
 - For slideshow reception tests, graphical receivers such as `dablin_gtk` are more useful than console-only players.
