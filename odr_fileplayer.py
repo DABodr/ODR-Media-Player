@@ -266,6 +266,7 @@ class ODRFilePlayer(Gtk.Window):
 
     def _build_ui(self):
         build_ui(self)
+        self.notebook.connect("switch-page", self.on_notebook_switch_page)
         self._bind_encoder_settings_watchers()
 
     def _bind_encoder_settings_watchers(self):
@@ -287,6 +288,24 @@ class ODRFilePlayer(Gtk.Window):
     def _on_silence_warning_changed(self, widget):
         self._update_silence_warning_state(force_recompute=True)
         self._update_status()
+
+    def on_notebook_switch_page(self, notebook, page, page_num):
+        GLib.idle_add(self._clear_default_dls_selection)
+
+    def _clear_default_dls_selection(self):
+        if not hasattr(self, "txt_dls"):
+            return False
+        try:
+            cursor_pos = self.txt_dls.get_position()
+        except Exception:
+            cursor_pos = 0
+        if cursor_pos is None or cursor_pos < 0:
+            cursor_pos = len(self.txt_dls.get_text() or "")
+        try:
+            self.txt_dls.select_region(cursor_pos, cursor_pos)
+        except Exception:
+            pass
+        return False
 
     # ============================================================
     # VU MÈTRE — dessin Cairo direct
