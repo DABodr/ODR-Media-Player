@@ -64,7 +64,6 @@ install -Dm755 "$ROOT_DIR/packaging/odr-media-player" "$PKG_DIR/usr/bin/odr-medi
 install -Dm644 "$ROOT_DIR/packaging/odr-media-player.desktop" "$DESKTOP_DIR/odr-media-player.desktop"
 install -Dm644 "$ROOT_DIR/odr_fileplayer.py" "$APP_DIR/odr_fileplayer.py"
 install -Dm644 "$ROOT_DIR/LICENSE" "$DOC_DIR/LICENSE"
-install -Dm644 "$ROOT_DIR/CLAUDE.md" "$DOC_DIR/CLAUDE.md"
 install -Dm644 "$ROOT_DIR/install_dependencies.sh" "$DOC_DIR/install_dependencies.sh"
 
 while IFS= read -r -d '' file; do
