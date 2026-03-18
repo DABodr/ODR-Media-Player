@@ -31,7 +31,7 @@ def _append_tab(owner, child, title, scrollable=False):
 def _build_headerbar(owner):
     hb = Gtk.HeaderBar()
     hb.set_show_close_button(True)
-    hb.set_title("ODR Media Player V1.1")
+    hb.set_title("ODR Media Player V1.1.2")
 
     owner.set_titlebar(hb)
 

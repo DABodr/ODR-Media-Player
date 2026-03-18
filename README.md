@@ -1,4 +1,4 @@
-# ODR Media Player V1.1
+# ODR Media Player V1.1.2
 
 `ODR Media Player` is a GTK3 desktop frontend for a local DAB+ playout and encoding chain based on:
 
@@ -46,14 +46,14 @@ It can also generate and manage:
 - PAD / SLS throughput estimate
 - Debian menu integration when installed from the `.deb`
 
-## V1.1 Highlights
+## V1.1.2 Highlights
 
 - Folder-based player view with automatic detection of new tracks in watched music folders
 - Direct seek control for local tracks
 - Better live-source supervision with retry counter and non-blocking silence warnings
 - Output preview aligned with the real `odr-padenc` slideshow state
 - `EDI (udp)` output support corrected for `odr-audioenc`
-- Updated Debian package build for `1.1.1`
+- Updated Debian package build for `1.1.2`
 
 ## Screenshots
 
@@ -215,7 +215,7 @@ DISPLAY=:0 python3 odr_fileplayer.py
 Output:
 
 ```text
-dist/odr-media-player_1.1.1_all.deb
+dist/odr-media-player_1.1.2_all.deb
 ```
 
 ## Configuration and runtime files

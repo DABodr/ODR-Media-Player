@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ODR Media Player V1.1 — Python 3 + GTK3 + GStreamer
+ODR Media Player V1.1.2 — Python 3 + GTK3 + GStreamer
 Architecture : GStreamer pipeline → ALSA Loopback → odr-audioenc → ZMQ → odr-dabmux
 """
 
@@ -108,7 +108,7 @@ class ODRFilePlayer(Gtk.Window):
     )
 
     def __init__(self):
-        super().__init__(title="ODR Media Player V1.1")
+        super().__init__(title="ODR Media Player V1.1.2")
         self._apply_window_icon()
         self._set_initial_window_size()
         self.connect("delete-event", self.on_close)
