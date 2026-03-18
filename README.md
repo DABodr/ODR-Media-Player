@@ -52,7 +52,7 @@ It can also generate and manage:
 - Better live-source supervision with retry counter and non-blocking silence warnings
 - Output preview aligned with the real `odr-padenc` slideshow state
 - `EDI (udp)` output support corrected for `odr-audioenc`
-- Updated Debian package build for `1.1.0`
+- Updated Debian package build for `1.1.1`
 
 ## Screenshots
 
@@ -91,7 +91,7 @@ DLS / DL+ / SLS
 If you already built the package:
 
 ```bash
-sudo apt install ./dist/odr-media-player_1.1.0_all.deb
+sudo apt install ./dist/odr-media-player_1.1.1_all.deb
 ```
 
 This installs:
@@ -208,7 +208,7 @@ DISPLAY=:0 python3 odr_fileplayer.py
 Output:
 
 ```text
-dist/odr-media-player_1.1.0_all.deb
+dist/odr-media-player_1.1.1_all.deb
 ```
 
 ## Configuration and runtime files

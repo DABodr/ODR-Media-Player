@@ -16,6 +16,7 @@ from gi.repository import Gio
 import os, random, shutil, subprocess, threading, time
 import re
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from encodeur_dab_app.constants import (
     BITRATES,
@@ -221,6 +222,8 @@ class ODRFilePlayer(Gtk.Window):
         return False
 
     def _schedule_initial_folder_watch_scan(self):
+        if self._playlist_import_running:
+            return True
         for folder in self._watched_folder_paths():
             self._schedule_folder_rescan(folder)
         return False
@@ -235,6 +238,8 @@ class ODRFilePlayer(Gtk.Window):
         return False
 
     def _autostart_playlist(self):
+        if self._playlist_import_running:
+            return True
         if self.runtime.proc_player is not None:
             return False
         if not self.playlist:
@@ -764,6 +769,175 @@ class ODRFilePlayer(Gtk.Window):
 
             if error_message:
                 self.log(f"{source_label} error: {error_message}")
+        finally:
+            self._set_playlist_import_state(False)
+        return False
+
+    def _start_config_playlist_load(self, playlist_paths, playlist_overrides):
+        if self._playlist_import_running:
+            return
+        entry_count = len(playlist_paths or ())
+        self.log(f"Saved playlist: loading {entry_count} entry(s) in background.")
+        self._set_playlist_import_state(True, "Loading saved playlist in background.")
+        worker = threading.Thread(
+            target=self._run_config_playlist_load_worker,
+            args=(tuple(playlist_paths or ()), dict(playlist_overrides or {})),
+            daemon=True,
+        )
+        worker.start()
+
+    def _run_config_playlist_load_worker(self, playlist_paths, playlist_overrides):
+        skipped = 0
+        error_message = ""
+
+        try:
+            invalid_indices = set()
+            resolved = {}
+            next_emit_index = 0
+            emitted_count = 0
+            emit_batch = []
+            emit_skipped = 0
+            batch_size = 24
+            max_workers = min(8, max(2, os.cpu_count() or 4))
+            future_map = {}
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                for index, path in enumerate(playlist_paths):
+                    if os.path.isfile(path):
+                        future = executor.submit(self._probe_track_file, path)
+                        future_map[future] = index
+                    elif is_stream_url(path):
+                        resolved[index] = self._build_track_for_saved_source(path)
+                    else:
+                        invalid_indices.add(index)
+
+                for future in as_completed(future_map):
+                    index = future_map[future]
+                    try:
+                        resolved[index] = future.result()
+                    except Exception:
+                        resolved[index] = None
+
+                    while next_emit_index < len(playlist_paths):
+                        if next_emit_index in invalid_indices:
+                            emit_skipped += 1
+                            skipped += 1
+                            next_emit_index += 1
+                            continue
+                        if next_emit_index not in resolved:
+                            break
+
+                        track = resolved.pop(next_emit_index)
+                        if track is None:
+                            emit_skipped += 1
+                            skipped += 1
+                        else:
+                            override = playlist_overrides.get(str(next_emit_index))
+                            if isinstance(override, dict):
+                                track.artist = str(override.get("artist", "") or "")
+                                track.title = str(override.get("title", "") or "")
+                                track.album = str(override.get("album", "") or "")
+                                track.manual_metadata = True
+                            emit_batch.append(track)
+                            emitted_count += 1
+                        next_emit_index += 1
+
+                        if len(emit_batch) >= batch_size:
+                            GLib.idle_add(
+                                self._append_config_playlist_batch,
+                                list(emit_batch),
+                                emitted_count,
+                                len(playlist_paths),
+                            )
+                            emit_batch.clear()
+                        elif emit_skipped >= batch_size:
+                            GLib.idle_add(
+                                self._append_config_playlist_batch,
+                                [],
+                                emitted_count,
+                                len(playlist_paths),
+                            )
+                            emit_skipped = 0
+
+            while next_emit_index < len(playlist_paths):
+                if next_emit_index in invalid_indices:
+                    emit_skipped += 1
+                    skipped += 1
+                    next_emit_index += 1
+                    continue
+                if next_emit_index not in resolved:
+                    break
+                track = resolved.pop(next_emit_index)
+                if track is None:
+                    emit_skipped += 1
+                    skipped += 1
+                else:
+                    override = playlist_overrides.get(str(next_emit_index))
+                    if isinstance(override, dict):
+                        track.artist = str(override.get("artist", "") or "")
+                        track.title = str(override.get("title", "") or "")
+                        track.album = str(override.get("album", "") or "")
+                        track.manual_metadata = True
+                    emit_batch.append(track)
+                    emitted_count += 1
+                next_emit_index += 1
+
+            if emit_batch or emit_skipped:
+                GLib.idle_add(
+                    self._append_config_playlist_batch,
+                    list(emit_batch),
+                    emitted_count,
+                    len(playlist_paths),
+                )
+        except Exception as exc:
+            error_message = str(exc)
+
+        GLib.idle_add(
+            self._finish_config_playlist_load,
+            emitted_count,
+            skipped,
+            error_message,
+        )
+
+    def _build_track_for_saved_source(self, path):
+        title_hint = ""
+        duration = "?"
+        if is_pulse_monitor_source(path):
+            title_hint = pulse_monitor_title(path)
+            duration = "LIVE"
+        elif is_pulse_source(path):
+            title_hint = pulse_source_title(path)
+            duration = "LIVE"
+        return Track(
+            path=path,
+            artist="",
+            title=title_hint,
+            album="",
+            duration=duration,
+        )
+
+    def _append_config_playlist_batch(self, tracks, loaded_count, total_count):
+        if tracks:
+            for track in tracks:
+                self.playlist.append(track)
+            self._refresh_pl()
+        if self._playlist_import_running and hasattr(self, "player_empty_hint"):
+            self.player_empty_hint.set_markup(
+                f"<i>Loading saved playlist in background. {loaded_count}/{total_count} ready.</i>"
+            )
+        return False
+
+    def _finish_config_playlist_load(self, loaded_count, skipped, error_message):
+        try:
+            if self.playlist:
+                self._ensure_playable_current()
+                self._refresh_pl()
+            if loaded_count:
+                self.log(f"Saved playlist: {loaded_count} track(s) loaded.")
+            if skipped:
+                self.log(f"Saved playlist: {skipped} item(s) skipped.")
+            if error_message:
+                self.log(f"Saved playlist error: {error_message}")
         finally:
             self._set_playlist_import_state(False)
         return False
@@ -3440,21 +3614,10 @@ class ODRFilePlayer(Gtk.Window):
             self._refresh_dls_controls()
 
             self.playlist.clear()
-            for index, path in enumerate(config.playlist):
-                track = None
-                if os.path.isfile(path):
-                    track = self._add_file(path)
-                elif is_stream_url(path):
-                    track = self._add_stream_url(path)
-                override = config.playlist_overrides.get(str(index))
-                if track is not None and isinstance(override, dict):
-                    track.artist = str(override.get("artist", "") or "")
-                    track.title = str(override.get("title", "") or "")
-                    track.album = str(override.get("album", "") or "")
-                    track.manual_metadata = True
-            self._refresh_pl()
-            if self.playlist:
-                self._ensure_playable_current()
+            if config.playlist:
+                self._start_config_playlist_load(config.playlist, config.playlist_overrides)
+            else:
+                self._refresh_pl()
         finally:
             self._applying_config = False
 
