@@ -1420,11 +1420,11 @@ def split_artist_title(value):
     if not value:
         return "", ""
 
-    for separator in (" - ", " — "):
+    for separator in (" - ", " — ", " -", " —", "- ", "— "):
         if separator in value:
             artist, title = value.split(separator, 1)
-            artist = artist.strip()
-            title = title.strip()
+            artist = artist.strip(" -—\t")
+            title = title.strip(" -—\t")
             if artist and title:
                 return artist, title
 
