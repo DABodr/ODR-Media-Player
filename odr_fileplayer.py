@@ -27,7 +27,13 @@ from encodeur_dab_app.constants import (
     SLIDE_DUMP,
     SLIDE_INPUT_FILE,
 )
-from encodeur_dab_app.app_config import AppConfig
+from encodeur_dab_app.app_config import (
+    AppConfig,
+    REPEAT_MODE_ALL,
+    REPEAT_MODE_FOLDER,
+    REPEAT_MODE_OFF,
+    normalize_repeat_mode,
+)
 from encodeur_dab_app.config_store import read_config_file, write_flat_config
 from encodeur_dab_app.dls import build_dls_content
 from encodeur_dab_app.encoder import (
@@ -95,6 +101,11 @@ class ODRFilePlayer(Gtk.Window):
     PLAYLIST_GROUP_AUDIO_INPUTS = "__audio_inputs__"
     PLAYLIST_GROUP_MISC = "__misc__"
     AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".ogg", ".aac", ".m4a", ".opus"}
+    REPEAT_MODE_OPTIONS = (
+        (REPEAT_MODE_OFF, "Repeat off"),
+        (REPEAT_MODE_ALL, "Repeat all"),
+        (REPEAT_MODE_FOLDER, "Repeat folder"),
+    )
 
     def __init__(self):
         super().__init__(title="ODR Media Player V1.1")
@@ -117,6 +128,7 @@ class ODRFilePlayer(Gtk.Window):
         self._last_app_audio_title_refresh = 0.0
         self._pending_cover_fetch_keys = set()
         self._playlist_import_running = False
+        self.repeat_mode = REPEAT_MODE_OFF
         self.playlist_group_enabled = {}
         self.playlist_group_expanded = {}
         self.playlist_folder_roots = []
@@ -134,6 +146,7 @@ class ODRFilePlayer(Gtk.Window):
 
         # ---- Construction UI ----
         self._build_ui()
+        self._set_repeat_mode(self.repeat_mode)
         self._refresh_dls_controls()
         self.show_all()
         GLib.idle_add(self._fit_window_to_workarea)
@@ -433,6 +446,15 @@ class ODRFilePlayer(Gtk.Window):
     def _playable_indices(self):
         return [i for i, track in enumerate(self.playlist) if self._is_track_enabled(track)]
 
+    def _playable_indices_for_group(self, group_key):
+        if not group_key:
+            return []
+        return [
+            i
+            for i, track in enumerate(self.playlist)
+            if self._is_track_enabled(track) and self._playlist_group_key(track) == group_key
+        ]
+
     def _first_playable_index(self):
         playable = self._playable_indices()
         return playable[0] if playable else None
@@ -446,17 +468,48 @@ class ODRFilePlayer(Gtk.Window):
         self.playlist.current_idx = -1 if first is None else first
         return first
 
-    def _next_playable_index(self, shuffle_enabled=False, repeat_enabled=False):
+    def _repeat_mode_label(self, mode):
+        mode = normalize_repeat_mode(mode)
+        for option_mode, label in self.REPEAT_MODE_OPTIONS:
+            if option_mode == mode:
+                return label
+        return "Repeat off"
+
+    def _set_repeat_mode(self, mode):
+        self.repeat_mode = normalize_repeat_mode(mode)
+        if hasattr(self, "lbl_repeat_mode") and self.lbl_repeat_mode is not None:
+            self.lbl_repeat_mode.set_text(self._repeat_mode_label(self.repeat_mode))
+
+    def on_repeat_mode_selected(self, _btn, mode):
+        self._set_repeat_mode(mode)
+        if hasattr(self, "repeat_mode_popover") and self.repeat_mode_popover is not None:
+            self.repeat_mode_popover.popdown()
+
+    def _repeat_mode(self):
+        return normalize_repeat_mode(getattr(self, "repeat_mode", REPEAT_MODE_OFF))
+
+    def _next_playable_index(self, shuffle_enabled=False, repeat_mode=REPEAT_MODE_OFF):
         playable = self._playable_indices()
         if not playable:
             return None
         current_idx = self.playlist.current_idx
+        current_track = self.playlist.current_track()
+        if repeat_mode == REPEAT_MODE_FOLDER and current_track is not None:
+            group_key = self._playlist_group_key(current_track)
+            scoped_playable = self._playable_indices_for_group(group_key)
+            if scoped_playable:
+                if shuffle_enabled:
+                    return random.choice(scoped_playable)
+                for idx in scoped_playable:
+                    if idx > current_idx:
+                        return idx
+                return scoped_playable[0]
         if shuffle_enabled:
             return random.choice(playable)
         for idx in playable:
             if idx > current_idx:
                 return idx
-        if repeat_enabled:
+        if repeat_mode == REPEAT_MODE_ALL:
             return playable[0]
         return None
 
@@ -475,8 +528,12 @@ class ODRFilePlayer(Gtk.Window):
             return "—"
 
         base_label = GLib.markup_escape_text(now_playing_label(track))
-        if is_stream_url(track.path) or is_pulse_monitor_source(track.path) or is_pulse_source(track.path):
-            return base_label
+        if is_pulse_monitor_source(track.path):
+            return f"{base_label} <b>- App audio</b>"
+        if is_pulse_source(track.path):
+            return f"{base_label} <b>- Audio input</b>"
+        if is_stream_url(track.path):
+            return f"{base_label} <b>- Stream URL</b>"
 
         folder = os.path.basename(os.path.dirname(track.path.rstrip(os.sep)))
         folder = (folder or "").strip()
@@ -507,7 +564,7 @@ class ODRFilePlayer(Gtk.Window):
             self.playlist.current_idx = old_index
             replacement = self._next_playable_index(
                 self.chk_shuffle.get_active(),
-                self.chk_repeat.get_active(),
+                self._repeat_mode(),
             )
             if replacement is None:
                 replacement = self._first_playable_index()
@@ -2374,7 +2431,7 @@ class ODRFilePlayer(Gtk.Window):
         if not self.playlist: return
         nxt = self._next_playable_index(
             self.chk_shuffle.get_active(),
-            self.chk_repeat.get_active(),
+            self._repeat_mode(),
         )
         if nxt is None:
             self.log("End of playlist.")
@@ -3545,7 +3602,7 @@ class ODRFilePlayer(Gtk.Window):
             playlist_autostart=self.chk_playlist_autostart.get_active(),
             encoder_autostart=self.chk_encoder_autostart.get_active(),
             shuffle=self.chk_shuffle.get_active(),
-            repeat=self.chk_repeat.get_active(),
+            repeat_mode=self._repeat_mode(),
             local_monitor=self.chk_local_monitor.get_active(),
             watch_loaded_folders=True,
             last_logo_dir=self.last_logo_dir,
@@ -3601,7 +3658,7 @@ class ODRFilePlayer(Gtk.Window):
             self.chk_playlist_autostart.set_active(config.playlist_autostart)
             self.chk_encoder_autostart.set_active(config.encoder_autostart)
             self.chk_shuffle.set_active(config.shuffle)
-            self.chk_repeat.set_active(config.repeat)
+            self._set_repeat_mode(config.repeat_mode)
             self.chk_local_monitor.set_active(config.local_monitor)
             self.last_logo_dir = config.last_logo_dir if os.path.isdir(config.last_logo_dir) else ""
             self.playlist_folder_roots = [

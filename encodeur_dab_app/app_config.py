@@ -3,6 +3,14 @@ from dataclasses import dataclass, field
 
 
 DEFAULT_DLS_TEXT = "DABcast — Live"
+REPEAT_MODE_OFF = "off"
+REPEAT_MODE_ALL = "all"
+REPEAT_MODE_FOLDER = "folder"
+REPEAT_MODE_VALUES = (
+    REPEAT_MODE_OFF,
+    REPEAT_MODE_ALL,
+    REPEAT_MODE_FOLDER,
+)
 
 
 @dataclass
@@ -31,7 +39,7 @@ class AppConfig:
     playlist_autostart: bool = False
     encoder_autostart: bool = False
     shuffle: bool = False
-    repeat: bool = False
+    repeat_mode: str = REPEAT_MODE_OFF
     local_monitor: bool = False
     watch_loaded_folders: bool = True
     last_logo_dir: str = ""
@@ -67,7 +75,10 @@ class AppConfig:
             playlist_autostart=settings.get("PlaylistAutostart", "0") == "1",
             encoder_autostart=settings.get("EncoderAutostart", "0") == "1",
             shuffle=settings.get("Shuffle", "0") == "1",
-            repeat=settings.get("Repeat", "0") == "1",
+            repeat_mode=normalize_repeat_mode(
+                settings.get("RepeatMode", ""),
+                legacy_repeat=settings.get("Repeat", "0") == "1",
+            ),
             local_monitor=settings.get("LocalMonitor", "0") == "1",
             watch_loaded_folders=settings.get("WatchLoadedFolders", "1") == "1",
             last_logo_dir=settings.get("LastLogoDir", ""),
@@ -102,7 +113,8 @@ class AppConfig:
             "PlaylistAutostart": "1" if self.playlist_autostart else "0",
             "EncoderAutostart": "1" if self.encoder_autostart else "0",
             "Shuffle": "1" if self.shuffle else "0",
-            "Repeat": "1" if self.repeat else "0",
+            "Repeat": "1" if self.repeat_mode != REPEAT_MODE_OFF else "0",
+            "RepeatMode": normalize_repeat_mode(self.repeat_mode),
             "LocalMonitor": "1" if self.local_monitor else "0",
             "WatchLoadedFolders": "1" if self.watch_loaded_folders else "0",
             "LastLogoDir": self.last_logo_dir,
@@ -118,6 +130,13 @@ def _as_int(value, default):
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def normalize_repeat_mode(value, legacy_repeat=False):
+    mode = str(value or "").strip().lower()
+    if mode in REPEAT_MODE_VALUES:
+        return mode
+    return REPEAT_MODE_ALL if legacy_repeat else REPEAT_MODE_OFF
 
 
 def _load_playlist_overrides(value):

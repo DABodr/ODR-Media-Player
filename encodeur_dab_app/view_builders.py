@@ -171,7 +171,25 @@ def _build_player_strip(owner):
     owner.btn_next = Gtk.Button(label="▶▶")
     owner.btn_next.connect("clicked", owner.on_next)
     owner.chk_shuffle = Gtk.CheckButton(label="Shuffle")
-    owner.chk_repeat = Gtk.CheckButton(label="Repeat")
+    owner.btn_repeat_mode = Gtk.MenuButton()
+    owner.btn_repeat_mode.set_size_request(126, -1)
+    repeat_box = Gtk.Box(spacing=4)
+    owner.lbl_repeat_mode = Gtk.Label(label="Repeat off")
+    repeat_box.pack_start(owner.lbl_repeat_mode, False, False, 0)
+    repeat_box.pack_start(Gtk.Label(label="▾"), False, False, 0)
+    owner.btn_repeat_mode.add(repeat_box)
+
+    owner.repeat_mode_popover = Gtk.Popover.new(owner.btn_repeat_mode)
+    repeat_menu_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+    repeat_menu_box.set_border_width(6)
+    for mode, label in owner.REPEAT_MODE_OPTIONS:
+        btn = Gtk.ModelButton(label=label)
+        btn.set_halign(Gtk.Align.FILL)
+        btn.connect("clicked", owner.on_repeat_mode_selected, mode)
+        repeat_menu_box.pack_start(btn, False, False, 0)
+    owner.repeat_mode_popover.add(repeat_menu_box)
+    repeat_menu_box.show_all()
+    owner.btn_repeat_mode.set_popover(owner.repeat_mode_popover)
     owner.chk_local_monitor = Gtk.CheckButton(label="Local monitor")
     owner.chk_local_monitor.connect("toggled", owner.on_local_monitor_toggled)
     for widget in [
@@ -181,7 +199,7 @@ def _build_player_strip(owner):
         owner.btn_stop_pl,
         owner.btn_next,
         owner.chk_shuffle,
-        owner.chk_repeat,
+        owner.btn_repeat_mode,
         owner.chk_local_monitor,
     ]:
         transport.pack_start(widget, False, False, 0)
