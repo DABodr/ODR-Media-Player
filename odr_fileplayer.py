@@ -145,6 +145,8 @@ class ODRFilePlayer(Gtk.Window):
         self._player_seek_updating = False
         self._player_seek_dragging = False
         self._player_recovery_source_id = 0
+        self._encoder_recovery_source_id = 0
+        self._encoder_recovery_deadline = 0.0
 
         # ---- Init GStreamer ----
         Gst.init(None)
@@ -247,12 +249,32 @@ class ODRFilePlayer(Gtk.Window):
         return False
 
     def _run_autostart_actions(self):
-        if getattr(self, "chk_encoder_autostart", None) is not None and self.chk_encoder_autostart.get_active():
-            self.log("Autostart enabled for encoder.")
-            self._start_all()
+        playlist_autostart = (
+            getattr(self, "chk_playlist_autostart", None) is not None
+            and self.chk_playlist_autostart.get_active()
+        )
+        encoder_autostart = (
+            getattr(self, "chk_encoder_autostart", None) is not None
+            and self.chk_encoder_autostart.get_active()
+        )
 
-        if getattr(self, "chk_playlist_autostart", None) is not None and self.chk_playlist_autostart.get_active():
+        if playlist_autostart:
             GLib.timeout_add(250, self._autostart_playlist)
+
+        if encoder_autostart:
+            if playlist_autostart:
+                GLib.timeout_add(1500, self._autostart_encoder)
+            else:
+                self._autostart_encoder()
+        return False
+
+    def _autostart_encoder(self):
+        if self._playlist_import_running:
+            return True
+        if self._encoder_running():
+            return False
+        self.log("Autostart enabled for encoder.")
+        self._start_all()
         return False
 
     def _autostart_playlist(self):
@@ -576,6 +598,17 @@ class ODRFilePlayer(Gtk.Window):
         except Exception:
             pass
         self._player_recovery_source_id = 0
+
+    def _cancel_pending_encoder_recovery(self):
+        source_id = getattr(self, "_encoder_recovery_source_id", 0)
+        if not source_id:
+            return
+        try:
+            GLib.source_remove(source_id)
+        except Exception:
+            pass
+        self._encoder_recovery_source_id = 0
+        self._encoder_recovery_deadline = 0.0
 
     def _reset_playback_display(self):
         self._highlight_current(-1)
@@ -3150,6 +3183,7 @@ class ODRFilePlayer(Gtk.Window):
                            "Please choose Stereo or another codec profile.")
 
     def _start_all(self):
+        self._cancel_pending_encoder_recovery()
         if self.runtime.loop_card < 0:
             self._msg_err("ALSA Loopback card not found.\n"
                           "The encoder cannot start without Loopback.\n"
@@ -3230,6 +3264,8 @@ class ODRFilePlayer(Gtk.Window):
 
     def _stop_all(self, restart=False):
         if not restart:
+            self._cancel_pending_encoder_recovery()
+        if not restart:
             self.runtime.restart_pending = False
 
         audio_running = is_running(self.runtime.proc_audioenc)
@@ -3305,6 +3341,8 @@ class ODRFilePlayer(Gtk.Window):
         self._refresh_monitor_vu()
         code = decode_exit_status(status)
         self.log(f"odr-audioenc exited (code={code})")
+        if self.runtime.audio_crash and not self.runtime.restart_pending:
+            self._schedule_encoder_recovery("odr-audioenc input fault")
         self._update_status()
         if not is_running(self.runtime.proc_padenc):
             cleanup_pad_artifacts()
@@ -3336,7 +3374,51 @@ class ODRFilePlayer(Gtk.Window):
                 self._refresh_restart_button()
 
     def _restart_after_stop(self):
+        self._cancel_pending_encoder_recovery()
         self.log("Restarting encoder...")
+        self._start_all()
+        return False
+
+    def _schedule_encoder_recovery(self, reason, timeout_seconds=20):
+        if self.playlist.paused:
+            return
+        current_track = self.playlist.current_track()
+        if current_track is None:
+            return
+
+        if self._encoder_recovery_source_id:
+            return
+
+        self._encoder_recovery_deadline = time.monotonic() + max(5, int(timeout_seconds))
+        self.log(
+            f"Encoder recovery scheduled after {reason}. "
+            "Waiting for player source to become active."
+        )
+        self._encoder_recovery_source_id = GLib.timeout_add_seconds(
+            1,
+            self._run_encoder_recovery,
+        )
+
+    def _run_encoder_recovery(self):
+        if self._encoder_running() or self.runtime.restart_pending:
+            self._cancel_pending_encoder_recovery()
+            return False
+
+        current_track = self.playlist.current_track()
+        if current_track is None or self.playlist.paused:
+            self._cancel_pending_encoder_recovery()
+            return False
+
+        if time.monotonic() >= float(self._encoder_recovery_deadline or 0.0):
+            self.log("Encoder recovery aborted: player source did not stabilise in time.")
+            self._cancel_pending_encoder_recovery()
+            return False
+
+        if self.runtime.proc_player is None:
+            return True
+
+        self.log("Encoder recovery: restarting encoder after player transition.")
+        self._cancel_pending_encoder_recovery()
         self._start_all()
         return False
 
@@ -4045,6 +4127,7 @@ class ODRFilePlayer(Gtk.Window):
         self.save_config()
         self._stop_folder_monitors()
         self.playlist.manual_skip = True
+        self._cancel_pending_encoder_recovery()
         self._stop_player()
         if audio_alive or pad_alive:
             self._stop_all()
