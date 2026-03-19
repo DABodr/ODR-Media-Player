@@ -2674,7 +2674,12 @@ class ODRFilePlayer(Gtk.Window):
             self.runtime.player_bus = None
             self.runtime.player_bus_handlers = ()
         if self.runtime.proc_player:
-            self.runtime.proc_player.set_state(Gst.State.NULL)
+            player = self.runtime.proc_player
+            player.set_state(Gst.State.NULL)
+            try:
+                player.get_state(2 * Gst.SECOND)
+            except Exception:
+                pass
             self.runtime.proc_player = None
         self.runtime.reset_player_vu()
         self.runtime.reset_stream_metadata()
