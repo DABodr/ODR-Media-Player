@@ -99,7 +99,7 @@ def build_pipeline(path, volume, loop_card, sample_rate=48000, local_monitor=Fal
         f"{source} ! audioconvert ! audioresample ! "
         f'audio/x-raw,rate={sample_rate} ! '
         f'volume volume={volume:.4f} name=vol ! tee name=t '
-        f't. ! queue ! alsasink device=plughw:{loop_card},0 '
+        f't. ! queue ! alsasink device=plughw:{loop_card},0,0 '
         f't. ! queue ! level name=lvl interval=300000000 post-messages=true ! fakesink'
     )
     if local_monitor:

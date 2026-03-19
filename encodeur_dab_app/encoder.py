@@ -63,9 +63,10 @@ def build_audio_cmd(options):
         [
             "-l",
             "-d",
-            # Use plughw on the capture side so ALSA can negotiate a compatible
-            # sample format with snd-aloop and avoid immediate init failures.
-            f"plughw:{options.loop_card},1",
+            # Lock capture to snd-aloop subdevice 0 so it always matches the
+            # playback side of the same loopback pair on systems with multiple
+            # loopback substreams, notably Raspberry Pi.
+            f"plughw:{options.loop_card},1,0",
             "-D",
             "-c",
             "1" if options.channels_index == 0 else "2",
