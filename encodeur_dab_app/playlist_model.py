@@ -11,6 +11,8 @@ class Track:
     title: str = ""
     album: str = ""
     duration: str = "?"
+    source_label: str = ""
+    source_label_manual: bool = False
     manual_metadata: bool = False
     source_pid: int = 0
     source_app_name: str = ""

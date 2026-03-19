@@ -4,10 +4,17 @@ from urllib.parse import urlparse
 
 def build_playlist_entry(index, track):
     text = f"{index + 1}.  "
-    text += now_playing_label(track)
+    text += playlist_label(track)
     if track.duration and track.duration != "?":
         text += f"  [{track.duration}]"
     return text
+
+
+def playlist_label(track):
+    source_label = str(getattr(track, "source_label", "") or "").strip()
+    if source_label and is_stream_url(track.path):
+        return source_label
+    return now_playing_label(track)
 
 
 def now_playing_label(track):

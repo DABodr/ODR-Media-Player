@@ -8,6 +8,7 @@ class RuntimeState:
     stream_station_name: str = ""
     stream_codec: str = ""
     stream_bitrate: str = ""
+    stream_live_metadata_seen: bool = False
     player_vu_left: int = 0
     player_vu_right: int = 0
     monitor_vu_left: int = 0
@@ -49,6 +50,7 @@ class RuntimeState:
         self.stream_station_name = ""
         self.stream_codec = ""
         self.stream_bitrate = ""
+        self.stream_live_metadata_seen = False
 
     def reset_silence_state(self):
         self.last_audioenc_data_at = 0.0

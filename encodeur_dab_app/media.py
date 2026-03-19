@@ -1013,7 +1013,12 @@ def _draw_title_card_background(cr, width, height, artwork_path, artist, title, 
     if artwork_path and os.path.isfile(artwork_path):
         try:
             src = GdkPixbuf.Pixbuf.new_from_file(artwork_path)
-            scale = max(width / src.get_width(), height / src.get_height())
+            if cover_only:
+                cr.set_source_rgb(1, 1, 1)
+                cr.paint()
+                scale = min(width / src.get_width(), height / src.get_height())
+            else:
+                scale = max(width / src.get_width(), height / src.get_height())
             scaled_width = max(1, int(round(src.get_width() * scale)))
             scaled_height = max(1, int(round(src.get_height() * scale)))
             scaled = src.scale_simple(scaled_width, scaled_height, GdkPixbuf.InterpType.BILINEAR)

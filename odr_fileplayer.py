@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ODR Media Player V1.1.2 — Python 3 + GTK3 + GStreamer
+ODR Media Player V1.1.3 — Python 3 + GTK3 + GStreamer
 Architecture : GStreamer pipeline → ALSA Loopback → odr-audioenc → ZMQ → odr-dabmux
 """
 
@@ -71,6 +71,7 @@ from encodeur_dab_app.monitor import draw_vu, gst_peak_to_vu, read_monitor_snaps
 from encodeur_dab_app.player import (
     build_pipeline,
     build_playlist_entry,
+    default_stream_title,
     is_pulse_monitor_source,
     is_pulse_source,
     is_stream_url,
@@ -108,7 +109,7 @@ class ODRFilePlayer(Gtk.Window):
     )
 
     def __init__(self):
-        super().__init__(title="ODR Media Player V1.1.2")
+        super().__init__(title="ODR Media Player V1.1.3")
         self._apply_window_icon()
         self._set_initial_window_size()
         self.connect("delete-event", self.on_close)
@@ -309,6 +310,10 @@ class ODRFilePlayer(Gtk.Window):
 
     def on_notebook_switch_page(self, notebook, page, page_num):
         GLib.idle_add(self._clear_default_dls_selection)
+
+    def on_default_dls_focus_in(self, widget, event):
+        GLib.idle_add(self._clear_default_dls_selection)
+        return False
 
     def _clear_default_dls_selection(self):
         if not hasattr(self, "txt_dls"):
@@ -533,7 +538,10 @@ class ODRFilePlayer(Gtk.Window):
         if is_pulse_source(track.path):
             return f"{base_label} <b>- Audio input</b>"
         if is_stream_url(track.path):
-            return f"{base_label} <b>- Stream URL</b>"
+            suffix = "<b>- Stream URL</b>"
+            if not track.manual_metadata and not self.runtime.stream_live_metadata_seen:
+                suffix += " <span foreground='#c07a00'><i>no live stream metadata</i></span>"
+            return f"{base_label} {suffix}"
 
         folder = os.path.basename(os.path.dirname(track.path.rstrip(os.sep)))
         folder = (folder or "").strip()
@@ -894,7 +902,13 @@ class ODRFilePlayer(Gtk.Window):
                                 track.artist = str(override.get("artist", "") or "")
                                 track.title = str(override.get("title", "") or "")
                                 track.album = str(override.get("album", "") or "")
+                                track.source_label = str(override.get("source_label", "") or "")
+                                track.source_label_manual = bool(override.get("source_label_manual", False))
+                                if track.source_label and not track.title and is_stream_url(track.path):
+                                    track.title = track.source_label
                                 track.manual_metadata = True
+                                if not (track.artist or track.title or track.album):
+                                    track.manual_metadata = False
                             emit_batch.append(track)
                             emitted_count += 1
                         next_emit_index += 1
@@ -934,7 +948,13 @@ class ODRFilePlayer(Gtk.Window):
                         track.artist = str(override.get("artist", "") or "")
                         track.title = str(override.get("title", "") or "")
                         track.album = str(override.get("album", "") or "")
+                        track.source_label = str(override.get("source_label", "") or "")
+                        track.source_label_manual = bool(override.get("source_label_manual", False))
+                        if track.source_label and not track.title and is_stream_url(track.path):
+                            track.title = track.source_label
                         track.manual_metadata = True
+                        if not (track.artist or track.title or track.album):
+                            track.manual_metadata = False
                     emit_batch.append(track)
                     emitted_count += 1
                 next_emit_index += 1
@@ -965,13 +985,26 @@ class ODRFilePlayer(Gtk.Window):
         elif is_pulse_source(path):
             title_hint = pulse_source_title(path)
             duration = "LIVE"
+        elif is_stream_url(path):
+            title_hint = default_stream_title(path)
         return Track(
             path=path,
             artist="",
             title=title_hint,
             album="",
             duration=duration,
+            source_label=title_hint,
+            source_label_manual=False,
         )
+
+    def _default_source_label_for_path(self, path):
+        if is_pulse_monitor_source(path):
+            return pulse_monitor_title(path)
+        if is_pulse_source(path):
+            return pulse_source_title(path)
+        if is_stream_url(path):
+            return default_stream_title(path)
+        return ""
 
     def _append_config_playlist_batch(self, tracks, loaded_count, total_count):
         if tracks:
@@ -1522,7 +1555,11 @@ class ODRFilePlayer(Gtk.Window):
             return
         track = self.playlist[idx]
         is_stream = is_stream_url(track.path)
+        is_station_stream = is_stream and not is_pulse_monitor_source(track.path) and not is_pulse_source(track.path)
+        is_live_source = is_stream
         previous_path = track.path
+        previous_source_label = str(getattr(track, "source_label", "") or "").strip()
+        previous_source_label_manual = bool(getattr(track, "source_label_manual", False))
 
         dlg = Gtk.Dialog(
             title="Edit playlist entry",
@@ -1559,6 +1596,21 @@ class ODRFilePlayer(Gtk.Window):
         path_entry.set_tooltip_text(track.path)
         grid.attach(path_label, 0, row, 1, 1)
         grid.attach(path_entry, 1, row, 1, 1)
+
+        source_name_entry = None
+        if is_live_source:
+            row += 1
+            source_name_entry = Gtk.Entry()
+            source_name_entry.set_text(previous_source_label or track.title or self._default_source_label_for_path(track.path))
+            source_name_entry.set_hexpand(True)
+            grid.attach(
+                Gtk.Label(label="Station name:" if is_station_stream else "Source name:", xalign=1),
+                0,
+                row,
+                1,
+                1,
+            )
+            grid.attach(source_name_entry, 1, row, 1, 1)
 
         if not is_stream:
             row += 1
@@ -1603,17 +1655,38 @@ class ODRFilePlayer(Gtk.Window):
                 dlg.destroy()
                 return
 
-            artist_changed = artist_entry.get_text() != track.artist
-            title_changed = title_entry.get_text() != track.title
-            album_changed = album_entry.get_text() != track.album
+            default_source_label = self._default_source_label_for_path(new_path)
+            next_source_label = previous_source_label
+            next_source_label_manual = previous_source_label_manual
+            if source_name_entry is not None:
+                entered_source_label = source_name_entry.get_text().strip()
+                next_source_label = entered_source_label or default_source_label
+                next_source_label_manual = bool(next_source_label and next_source_label != default_source_label)
+
+            next_artist = artist_entry.get_text()
+            next_title = title_entry.get_text()
+            next_album = album_entry.get_text()
+            if source_name_entry is not None and not next_artist and (not next_title or next_title == previous_source_label):
+                next_title = next_source_label
+
+            artist_changed = next_artist != track.artist
+            title_changed = next_title != track.title
+            album_changed = next_album != track.album
             metadata_changed = artist_changed or title_changed or album_changed
+            manual_artist_changed = artist_entry.get_text() != track.artist
+            manual_title_changed = title_entry.get_text() != track.title
+            manual_album_changed = album_entry.get_text() != track.album
+            manual_metadata_changed = manual_artist_changed or manual_title_changed or manual_album_changed
 
             if is_stream:
                 track.path = new_path
-            track.artist = artist_entry.get_text()
-            track.title = title_entry.get_text()
-            track.album = album_entry.get_text()
-            if metadata_changed:
+            if source_name_entry is not None:
+                track.source_label = next_source_label
+                track.source_label_manual = next_source_label_manual
+            track.artist = next_artist
+            track.title = next_title
+            track.album = next_album
+            if manual_metadata_changed:
                 track.manual_metadata = True
 
             self._refresh_pl()
@@ -1982,6 +2055,7 @@ class ODRFilePlayer(Gtk.Window):
         if not is_stream_url(url):
             return
         title_hint = (title_hint or "").strip()
+        source_label = title_hint or default_stream_title(url)
         duration = "?"
         if is_pulse_monitor_source(url):
             title_hint = title_hint or pulse_monitor_title(url)
@@ -1995,6 +2069,8 @@ class ODRFilePlayer(Gtk.Window):
             title=title_hint,
             album="",
             duration=duration,
+            source_label=source_label,
+            source_label_manual=False,
         )
         self.playlist.append(track)
         return track
@@ -2009,6 +2085,8 @@ class ODRFilePlayer(Gtk.Window):
         for existing in self.playlist:
             if existing.path == path:
                 existing.title = title_hint
+                if not getattr(existing, "source_label_manual", False):
+                    existing.source_label = title_hint
                 existing.source_pid = int(source_pid or 0)
                 existing.source_app_name = (source_app_name or "").strip()
                 return existing
@@ -2019,6 +2097,8 @@ class ODRFilePlayer(Gtk.Window):
             title=title_hint,
             album="",
             duration="LIVE",
+            source_label=title_hint,
+            source_label_manual=False,
             source_pid=int(source_pid or 0),
             source_app_name=(source_app_name or "").strip(),
         )
@@ -2036,6 +2116,8 @@ class ODRFilePlayer(Gtk.Window):
             if existing.path == path:
                 existing.title = title_hint
                 existing.duration = "LIVE"
+                if not getattr(existing, "source_label_manual", False):
+                    existing.source_label = title_hint
                 return existing
 
         track = Track(
@@ -2044,6 +2126,8 @@ class ODRFilePlayer(Gtk.Window):
             title=title_hint,
             album="",
             duration="LIVE",
+            source_label=title_hint,
+            source_label_manual=False,
         )
         self.playlist.append(track)
         return track
@@ -2344,6 +2428,10 @@ class ODRFilePlayer(Gtk.Window):
         title_tag = self._gst_tag_string(tags, "title")
         artist_tag = self._gst_tag_string(tags, "artist")
         album_tag = self._gst_tag_string(tags, "album")
+        had_live_metadata = self.runtime.stream_live_metadata_seen
+        has_live_metadata = bool(title_tag or artist_tag or album_tag)
+        if has_live_metadata:
+            self.runtime.stream_live_metadata_seen = True
         metadata_changed = False
 
         if track.manual_metadata:
@@ -2370,7 +2458,7 @@ class ODRFilePlayer(Gtk.Window):
             track.album = album_tag
             metadata_changed = True
 
-        if not metadata_changed:
+        if not metadata_changed and had_live_metadata == self.runtime.stream_live_metadata_seen:
             return
 
         info = now_playing_label(track)
@@ -3681,12 +3769,16 @@ class ODRFilePlayer(Gtk.Window):
     def _collect_playlist_overrides(self):
         overrides = {}
         for index, track in enumerate(self.playlist):
-            if not getattr(track, "manual_metadata", False):
+            source_label = str(getattr(track, "source_label", "") or "").strip()
+            source_label_manual = bool(getattr(track, "source_label_manual", False))
+            if not getattr(track, "manual_metadata", False) and not source_label_manual:
                 continue
             overrides[str(index)] = {
                 "artist": track.artist,
                 "title": track.title,
                 "album": track.album,
+                "source_label": source_label,
+                "source_label_manual": source_label_manual,
             }
         return overrides
 

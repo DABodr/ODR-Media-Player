@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_NAME="odr-media-player"
-PKG_VERSION="${1:-1.1.2}"
+PKG_VERSION="${1:-1.1.3}"
 PKG_ARCH="all"
 DIST_DIR="$ROOT_DIR/dist"
 BUILD_DIR="$DIST_DIR/build"
@@ -64,6 +64,7 @@ install -Dm755 "$ROOT_DIR/packaging/odr-media-player" "$PKG_DIR/usr/bin/odr-medi
 install -Dm644 "$ROOT_DIR/packaging/odr-media-player.desktop" "$DESKTOP_DIR/odr-media-player.desktop"
 install -Dm644 "$ROOT_DIR/odr_fileplayer.py" "$APP_DIR/odr_fileplayer.py"
 install -Dm644 "$ROOT_DIR/LICENSE" "$DOC_DIR/LICENSE"
+install -Dm644 "$ROOT_DIR/THIRD_PARTY_NOTICES.md" "$DOC_DIR/THIRD_PARTY_NOTICES.md"
 install -Dm644 "$ROOT_DIR/install_dependencies.sh" "$DOC_DIR/install_dependencies.sh"
 
 while IFS= read -r -d '' file; do
