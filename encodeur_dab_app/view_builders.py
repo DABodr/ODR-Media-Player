@@ -1,4 +1,4 @@
-from gi.repository import Gtk
+from gi.repository import Gdk, Gtk
 
 from .app_config import DEFAULT_DLS_TEXT
 from .constants import BITRATES, PAD_LENGTHS
@@ -40,6 +40,7 @@ def _build_tab_lecteur(owner):
     vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
 
     scroll = Gtk.ScrolledWindow()
+    owner.scroll_pl = scroll
     scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
     scroll.set_shadow_type(Gtk.ShadowType.IN)
     owner.store_pl = Gtk.TreeStore(int, str, str, bool, bool, bool)
@@ -59,12 +60,19 @@ def _build_tab_lecteur(owner):
     owner.tv_pl.append_column(col)
     owner.tv_pl.set_expander_column(col)
     owner.tv_pl.set_headers_visible(False)
-    owner.tv_pl.set_reorderable(True)
+    owner.tv_pl.set_reorderable(False)
+    owner.tv_pl.add_events(
+        Gdk.EventMask.BUTTON_PRESS_MASK
+        | Gdk.EventMask.BUTTON_RELEASE_MASK
+        | Gdk.EventMask.POINTER_MOTION_MASK
+    )
     owner.tv_pl.get_selection().set_mode(Gtk.SelectionMode.MULTIPLE)
     owner.tv_pl.connect("row-activated", owner._on_pl_dblclick)
     owner.tv_pl.connect("row-expanded", owner.on_playlist_row_expanded)
     owner.tv_pl.connect("row-collapsed", owner.on_playlist_row_collapsed)
-    owner.store_pl.connect("rows-reordered", owner.on_playlist_rows_reordered)
+    owner.tv_pl.connect("button-press-event", owner.on_playlist_button_press)
+    owner.tv_pl.connect("motion-notify-event", owner.on_playlist_motion_notify)
+    owner.tv_pl.connect("button-release-event", owner.on_playlist_button_release)
     scroll.add(owner.tv_pl)
 
     owner.player_stack = Gtk.Stack()

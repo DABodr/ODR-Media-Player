@@ -135,12 +135,16 @@ class ODRFilePlayer(Gtk.Window):
         self.playlist_folder_roots = []
         self._playlist_model_refreshing = False
         self._playlist_reorder_sync_pending = False
+        self._playlist_drag_source_path = None
+        self._playlist_drag_start = None
+        self._playlist_drag_active = False
         self._applying_config = False
         self._folder_monitors = {}
         self._folder_rescan_sources = {}
         self._folder_scan_in_progress = set()
         self._player_seek_updating = False
         self._player_seek_dragging = False
+        self._player_recovery_source_id = 0
 
         # ---- Init GStreamer ----
         Gst.init(None)
@@ -552,6 +556,26 @@ class ODRFilePlayer(Gtk.Window):
 
     def _set_now_playing_label(self, track=None):
         self.lbl_now.set_markup(self._now_playing_markup(track))
+
+    def _is_live_playlist_track(self, track):
+        if track is None:
+            return False
+        path = track.path or ""
+        return (
+            is_stream_url(path)
+            or is_pulse_source(path)
+            or is_pulse_monitor_source(path)
+        )
+
+    def _cancel_pending_player_recovery(self):
+        source_id = getattr(self, "_player_recovery_source_id", 0)
+        if not source_id:
+            return
+        try:
+            GLib.source_remove(source_id)
+        except Exception:
+            pass
+        self._player_recovery_source_id = 0
 
     def _reset_playback_display(self):
         self._highlight_current(-1)
@@ -1340,6 +1364,178 @@ class ODRFilePlayer(Gtk.Window):
         group_key = str(self.store_pl[tree_iter][1] or "")
         self.playlist_group_expanded[group_key] = False
 
+    def _first_child_path(self, parent_iter):
+        if parent_iter is None:
+            return None
+        child = self.store_pl.iter_children(parent_iter)
+        if child is None:
+            return None
+        return self.store_pl.get_path(child)
+
+    def _last_child_path(self, parent_iter):
+        if parent_iter is None:
+            return None
+        child = self.store_pl.iter_children(parent_iter)
+        last_child = None
+        while child is not None:
+            last_child = child
+            child = self.store_pl.iter_next(child)
+        if last_child is None:
+            return None
+        return self.store_pl.get_path(last_child)
+
+    def _copy_tree_path(self, path):
+        if path is None:
+            return None
+        try:
+            return Gtk.TreePath.new_from_string(path.to_string())
+        except Exception:
+            return None
+
+    def _reset_playlist_drag_state(self):
+        self._playlist_drag_source_path = None
+        self._playlist_drag_start = None
+        self._playlist_drag_active = False
+        if hasattr(self, "tv_pl"):
+            try:
+                self.tv_pl.set_drag_dest_row(None, Gtk.TreeViewDropPosition.BEFORE)
+            except Exception:
+                pass
+
+    def _normalize_playlist_drop(self, source_path, dest_path, position):
+        if source_path is None or dest_path is None:
+            return None, None
+        try:
+            source_iter = self.store_pl.get_iter(source_path)
+            dest_iter = self.store_pl.get_iter(dest_path)
+        except Exception:
+            return None, None
+        if source_iter is None or dest_iter is None:
+            return None, None
+
+        source_is_group = bool(self.store_pl[source_iter][4])
+        dest_is_group = bool(self.store_pl[dest_iter][4])
+        use_before = position in (
+            Gtk.TreeViewDropPosition.BEFORE,
+            Gtk.TreeViewDropPosition.INTO_OR_BEFORE,
+        )
+        normalized_position = (
+            Gtk.TreeViewDropPosition.BEFORE if use_before else Gtk.TreeViewDropPosition.AFTER
+        )
+
+        if source_is_group:
+            if not dest_is_group:
+                parent_iter = self.store_pl.iter_parent(dest_iter)
+                if parent_iter is not None:
+                    dest_iter = parent_iter
+            return self.store_pl.get_path(dest_iter), normalized_position
+
+        source_group_key = str(self.store_pl[source_iter][1] or "")
+        if dest_is_group:
+            dest_group_key = str(self.store_pl[dest_iter][1] or "")
+            if source_group_key != dest_group_key:
+                return None, None
+            target_path = self._first_child_path(dest_iter) if use_before else self._last_child_path(dest_iter)
+            if target_path is None:
+                return None, None
+            return target_path, normalized_position
+
+        dest_group_key = str(self.store_pl[dest_iter][1] or "")
+        if source_group_key != dest_group_key:
+            return None, None
+        return self.store_pl.get_path(dest_iter), normalized_position
+
+    def on_playlist_button_press(self, treeview, event):
+        if int(getattr(event, "button", 0) or 0) != 1:
+            self._reset_playlist_drag_state()
+            return False
+        path_info = treeview.get_path_at_pos(int(event.x), int(event.y))
+        if not path_info:
+            self._reset_playlist_drag_state()
+            return False
+        selection = treeview.get_selection()
+        _, selected_paths = selection.get_selected_rows()
+        if len(selected_paths) > 1:
+            self._reset_playlist_drag_state()
+            return False
+        source_path = self._copy_tree_path(path_info[0])
+        if source_path is None:
+            self._reset_playlist_drag_state()
+            return False
+        self._playlist_drag_source_path = source_path
+        self._playlist_drag_start = (int(event.x), int(event.y))
+        self._playlist_drag_active = False
+        return False
+
+    def on_playlist_motion_notify(self, treeview, event):
+        if self._playlist_drag_source_path is None or self._playlist_drag_start is None:
+            return False
+        if not (int(getattr(event, "state", 0) or 0) & int(Gdk.ModifierType.BUTTON1_MASK)):
+            return False
+        start_x, start_y = self._playlist_drag_start
+        current_x = int(event.x)
+        current_y = int(event.y)
+        if not self._playlist_drag_active:
+            if not treeview.drag_check_threshold(start_x, start_y, current_x, current_y):
+                return False
+            self._playlist_drag_active = True
+
+        dest = treeview.get_dest_row_at_pos(current_x, current_y)
+        if not dest:
+            path_info = treeview.get_path_at_pos(current_x, current_y)
+            if not path_info:
+                return False
+            dest = (path_info[0], Gtk.TreeViewDropPosition.AFTER)
+        dest_path, position = self._normalize_playlist_drop(self._playlist_drag_source_path, dest[0], dest[1])
+        if dest_path is not None:
+            treeview.set_drag_dest_row(dest_path, position)
+        return False
+
+    def on_playlist_button_release(self, treeview, event):
+        if int(getattr(event, "button", 0) or 0) != 1:
+            return False
+        source_path = self._playlist_drag_source_path
+        was_dragging = self._playlist_drag_active
+        self._reset_playlist_drag_state()
+        if source_path is None or not was_dragging:
+            return False
+
+        dest = treeview.get_dest_row_at_pos(int(event.x), int(event.y))
+        if not dest:
+            path_info = treeview.get_path_at_pos(int(event.x), int(event.y))
+            if not path_info:
+                return False
+            dest = (path_info[0], Gtk.TreeViewDropPosition.AFTER)
+        dest_path, position = self._normalize_playlist_drop(source_path, dest[0], dest[1])
+        if dest_path is None:
+            self.log("Drag-and-drop ignored: tracks can only be moved inside their own group.")
+            return False
+        self._apply_playlist_drag_drop(source_path, dest_path, position)
+        return False
+
+    def _apply_playlist_drag_drop(self, source_path, dest_path, position):
+        try:
+            source_iter = self.store_pl.get_iter(source_path)
+            dest_iter = self.store_pl.get_iter(dest_path)
+        except Exception:
+            return False
+        if source_iter is None or dest_iter is None:
+            return False
+
+        before = position == Gtk.TreeViewDropPosition.BEFORE
+        source_is_group = bool(self.store_pl[source_iter][4])
+        if source_is_group:
+            source_group_key = str(self.store_pl[source_iter][1] or "")
+            dest_group_iter = dest_iter if bool(self.store_pl[dest_iter][4]) else self.store_pl.iter_parent(dest_iter)
+            if dest_group_iter is None:
+                return False
+            dest_group_key = str(self.store_pl[dest_group_iter][1] or "")
+            return self._move_group_to_drop(source_group_key, dest_group_key, before)
+
+        source_idx = int(self.store_pl[source_iter][0])
+        dest_idx = int(self.store_pl[dest_iter][0])
+        return self._move_track_to_drop(source_idx, dest_idx, before)
+
     def on_playlist_rows_reordered(self, model, tree_path, tree_iter, new_order):
         if self._playlist_model_refreshing or self._playlist_reorder_sync_pending:
             return
@@ -1364,24 +1560,45 @@ class ODRFilePlayer(Gtk.Window):
         reordered_tracks = []
         next_group_enabled = {}
         next_group_expanded = {}
+        invalid_cross_group_move = False
 
         root_iter = self.store_pl.get_iter_first()
         while root_iter:
-            if bool(self.store_pl[root_iter][4]):
-                group_key = str(self.store_pl[root_iter][1] or "")
-                next_group_enabled[group_key] = bool(self.store_pl[root_iter][5])
-                path = self.store_pl.get_path(root_iter)
-                next_group_expanded[group_key] = bool(path is not None and self.tv_pl.row_expanded(path))
+            if not bool(self.store_pl[root_iter][4]):
+                self._refresh_pl()
+                self._select_tracks(selected_tracks)
+                return False
 
-                child = self.store_pl.iter_children(root_iter)
-                while child:
-                    idx = int(self.store_pl[child][0])
-                    if 0 <= idx < len(previous_tracks):
-                        reordered_tracks.append(previous_tracks[idx])
-                    child = self.store_pl.iter_next(child)
+            group_key = str(self.store_pl[root_iter][1] or "")
+            next_group_enabled[group_key] = bool(self.store_pl[root_iter][5])
+            path = self.store_pl.get_path(root_iter)
+            next_group_expanded[group_key] = bool(path is not None and self.tv_pl.row_expanded(path))
+
+            child = self.store_pl.iter_children(root_iter)
+            while child:
+                if bool(self.store_pl[child][4]) or self.store_pl.iter_children(child) is not None:
+                    self._refresh_pl()
+                    self._select_tracks(selected_tracks)
+                    return False
+                idx = int(self.store_pl[child][0])
+                if 0 <= idx < len(previous_tracks):
+                    track = previous_tracks[idx]
+                    if self._playlist_group_key(track) != group_key:
+                        invalid_cross_group_move = True
+                    else:
+                        reordered_tracks.append(track)
+                child = self.store_pl.iter_next(child)
             root_iter = self.store_pl.iter_next(root_iter)
 
+        if invalid_cross_group_move:
+            self.log("Drag-and-drop ignored: tracks can only be reordered inside their own group.")
+            self._refresh_pl()
+            self._select_tracks(selected_tracks)
+            return False
+
         if len(reordered_tracks) != len(previous_tracks):
+            self._refresh_pl()
+            self._select_tracks(selected_tracks)
             return False
 
         self.playlist.tracks = reordered_tracks
@@ -1984,6 +2201,46 @@ class ODRFilePlayer(Gtk.Window):
 
         self._walk_playlist_rows(maybe_select)
 
+    def _playlist_scroll_value(self):
+        if not hasattr(self, "scroll_pl"):
+            return None
+        try:
+            return self.scroll_pl.get_vadjustment().get_value()
+        except Exception:
+            return None
+
+    def _restore_playlist_scroll_value(self, value):
+        if value is None or not hasattr(self, "scroll_pl"):
+            return False
+        try:
+            adjustment = self.scroll_pl.get_vadjustment()
+            lower = adjustment.get_lower()
+            upper = max(lower, adjustment.get_upper() - adjustment.get_page_size())
+            adjustment.set_value(max(lower, min(value, upper)))
+        except Exception:
+            pass
+        return False
+
+    def _refresh_playlist_track_row(self, idx):
+        if idx < 0 or idx >= len(self.playlist):
+            return
+
+        def update_row(tree_iter):
+            if bool(self.store_pl[tree_iter][4]):
+                return
+            row_idx = int(self.store_pl[tree_iter][0])
+            if row_idx != idx:
+                return
+            self.store_pl.set(
+                tree_iter,
+                2,
+                build_playlist_entry(row_idx, self.playlist[row_idx]),
+                3,
+                row_idx == self.playlist.current_idx,
+            )
+
+        self._walk_playlist_rows(update_row)
+
     def _move_selected_groups(self, direction):
         if direction not in (-1, 1):
             return False
@@ -2037,6 +2294,69 @@ class ODRFilePlayer(Gtk.Window):
         self.save_config()
         return True
 
+    def _move_group_to_drop(self, source_group_key, dest_group_key, before):
+        if not source_group_key or not dest_group_key or source_group_key == dest_group_key:
+            return False
+
+        grouped_tracks = {}
+        ordered_groups = []
+        for track in self.playlist:
+            group_key = self._playlist_group_key(track)
+            if group_key not in grouped_tracks:
+                grouped_tracks[group_key] = []
+                ordered_groups.append(group_key)
+            grouped_tracks[group_key].append(track)
+
+        if source_group_key not in grouped_tracks or dest_group_key not in grouped_tracks:
+            return False
+
+        current_track = self.playlist.current_track()
+        ordered_groups.remove(source_group_key)
+        dest_index = ordered_groups.index(dest_group_key)
+        insert_index = dest_index if before else dest_index + 1
+        ordered_groups.insert(insert_index, source_group_key)
+
+        reordered_tracks = []
+        for group_key in ordered_groups:
+            reordered_tracks.extend(grouped_tracks.get(group_key, []))
+
+        if len(reordered_tracks) != len(self.playlist.tracks):
+            return False
+
+        self.playlist.tracks = reordered_tracks
+        self._restore_current_track_index(current_track, fallback_idx=0)
+        self._refresh_pl()
+        self._select_group_rows([source_group_key])
+        self.save_config()
+        return True
+
+    def _move_track_to_drop(self, source_idx, dest_idx, before):
+        if source_idx < 0 or dest_idx < 0:
+            return False
+        if source_idx >= len(self.playlist.tracks) or dest_idx >= len(self.playlist.tracks):
+            return False
+
+        tracks = list(self.playlist.tracks)
+        source_track = tracks[source_idx]
+        dest_track = tracks[dest_idx]
+        if self._playlist_group_key(source_track) != self._playlist_group_key(dest_track):
+            return False
+
+        current_track = self.playlist.current_track()
+        moving_track = tracks.pop(source_idx)
+        if source_idx < dest_idx:
+            dest_idx -= 1
+        insert_idx = dest_idx if before else dest_idx + 1
+        insert_idx = max(0, min(insert_idx, len(tracks)))
+        tracks.insert(insert_idx, moving_track)
+
+        self.playlist.tracks = tracks
+        self._restore_current_track_index(current_track, fallback_idx=insert_idx)
+        self._refresh_pl()
+        self._select_tracks([moving_track])
+        self.save_config()
+        return True
+
     def _probe_track_file(self, path):
         if not os.path.isfile(path) or should_ignore_audio_file(path):
             return None
@@ -2055,7 +2375,8 @@ class ODRFilePlayer(Gtk.Window):
         if not is_stream_url(url):
             return
         title_hint = (title_hint or "").strip()
-        source_label = title_hint or default_stream_title(url)
+        default_label = default_stream_title(url)
+        source_label = title_hint or default_label
         duration = "?"
         if is_pulse_monitor_source(url):
             title_hint = title_hint or pulse_monitor_title(url)
@@ -2070,7 +2391,7 @@ class ODRFilePlayer(Gtk.Window):
             album="",
             duration=duration,
             source_label=source_label,
-            source_label_manual=False,
+            source_label_manual=bool(source_label and source_label != default_label),
         )
         self.playlist.append(track)
         return track
@@ -2134,6 +2455,7 @@ class ODRFilePlayer(Gtk.Window):
 
     def _refresh_pl(self):
         current = self.playlist.current_idx
+        scroll_value = self._playlist_scroll_value()
         groups = []
         grouped_tracks = {}
         for i, track in enumerate(self.playlist):
@@ -2184,6 +2506,7 @@ class ODRFilePlayer(Gtk.Window):
                 self.tv_pl.expand_row(tree_path, False)
             else:
                 self.tv_pl.collapse_row(tree_path)
+        GLib.idle_add(self._restore_playlist_scroll_value, scroll_value)
         self._refresh_player_empty_state()
         self._refresh_folder_monitors()
 
@@ -2264,6 +2587,7 @@ class ODRFilePlayer(Gtk.Window):
 
     def on_stop_play(self, btn):
         self.playlist.manual_skip = True
+        self._cancel_pending_player_recovery()
         self._stop_player()
         self.runtime.reset_player_recovery()
         self.playlist.paused = False
@@ -2288,6 +2612,7 @@ class ODRFilePlayer(Gtk.Window):
         self._restart_player_with_current_position()
 
     def _stop_player(self):
+        self._cancel_pending_player_recovery()
         if self.runtime.player_bus is not None:
             for handler_id in self.runtime.player_bus_handlers:
                 try:
@@ -2315,6 +2640,7 @@ class ODRFilePlayer(Gtk.Window):
         if not self._is_track_enabled(self.playlist[idx]):
             self._msg_info("Enable this group before playing one of its tracks.")
             return
+        self._cancel_pending_player_recovery()
         previous_track = self.playlist.current_track()
         self.playlist.manual_skip = True
         self._stop_player()
@@ -2463,8 +2789,7 @@ class ODRFilePlayer(Gtk.Window):
 
         info = now_playing_label(track)
         self._set_now_playing_label(track)
-        self._refresh_pl()
-        self._highlight_current(self.playlist.current_idx)
+        self._refresh_playlist_track_row(self.playlist.current_idx)
         self.write_dls_file(track)
         self._update_sls_source_preview(track_override=track)
         self._update_monitor()
@@ -2497,23 +2822,89 @@ class ODRFilePlayer(Gtk.Window):
     def _on_gst_eos(self, bus, msg, player):
         if player is not self.runtime.proc_player:
             return
-        GLib.idle_add(self._player_finished, player)
+        GLib.idle_add(self._player_finished, player, "end of stream")
 
     def _on_gst_error(self, bus, msg, player):
         if player is not self.runtime.proc_player:
             return
         err, _ = msg.parse_error()
         self.log(f"[gst] Error: {err.message}")
-        GLib.idle_add(self._player_finished, player)
+        GLib.idle_add(self._player_finished, player, err.message or "stream error")
 
-    def _player_finished(self, player):
+    def _player_finished(self, player, reason="playback ended"):
         if player is not self.runtime.proc_player:
             return False
         if self.playlist.manual_skip:
             return False
+        track = self.playlist.current_track()
+        if self._is_live_playlist_track(track):
+            if self._schedule_live_player_recovery(reason):
+                return False
         self._stop_player()
         self._advance_next()
         return False
+
+    def _run_live_player_recovery(self, expected_idx, expected_path, reason):
+        self._player_recovery_source_id = 0
+        if self.runtime.proc_player is not None or self.playlist.paused:
+            return False
+        if expected_idx < 0 or expected_idx >= len(self.playlist):
+            return False
+
+        track = self.playlist[expected_idx]
+        if track.path != expected_path or not self._is_live_playlist_track(track):
+            return False
+        if not self._is_track_enabled(track):
+            return False
+
+        self.runtime.player_recovery_attempted = True
+        self.runtime.player_recovery_path = expected_path
+        self.runtime.player_recovery_last_attempt_at = time.monotonic()
+        self.runtime.player_recovery_count += 1
+        self.log(f"Player recovery: restarting current source after {reason}.")
+        self._play_track(expected_idx, start_paused=False)
+        return False
+
+    def _schedule_live_player_recovery(self, reason):
+        track = self.playlist.current_track()
+        if not self._is_live_playlist_track(track):
+            return False
+
+        current_idx = self.playlist.current_idx
+        current_path = track.path or ""
+        if current_idx < 0 or not current_path:
+            return False
+
+        if self.runtime.player_recovery_path != current_path:
+            self.runtime.reset_player_recovery()
+            self.runtime.player_recovery_path = current_path
+
+        retry_interval = 30.0
+        now = time.monotonic()
+        last_attempt_at = float(self.runtime.player_recovery_last_attempt_at or 0.0)
+        delay = 0.0
+        if last_attempt_at > 0.0:
+            delay = max(0.0, retry_interval - (now - last_attempt_at))
+
+        self._stop_player()
+
+        if delay <= 0.0:
+            return self._run_live_player_recovery(current_idx, current_path, reason)
+
+        self._cancel_pending_player_recovery()
+        wait_seconds = max(1, int(delay + 0.999))
+        self.log(
+            f"Player recovery: current source failed ({reason}). "
+            f"Retry in {wait_seconds} s."
+        )
+        self._player_recovery_source_id = GLib.timeout_add(
+            int(delay * 1000),
+            self._run_live_player_recovery,
+            current_idx,
+            current_path,
+            reason,
+        )
+        return True
 
     def _advance_next(self):
         if not self.playlist: return
@@ -3082,8 +3473,7 @@ class ODRFilePlayer(Gtk.Window):
         track.title = next_title
         info = now_playing_label(track)
         self._set_now_playing_label(track)
-        self._refresh_pl()
-        self._highlight_current(self.playlist.current_idx)
+        self._refresh_playlist_track_row(self.playlist.current_idx)
         self.write_dls_file(track)
         self._update_sls_source_preview(track_override=track)
         self._update_monitor()
@@ -3371,8 +3761,7 @@ class ODRFilePlayer(Gtk.Window):
         track = self.playlist.current_track()
         retry_count = int(self.runtime.player_recovery_count or 0)
         if (
-            self.runtime.proc_player is None
-            or track is None
+            track is None
             or retry_count <= 0
             or not (
                 is_stream_url(track.path)
@@ -3771,7 +4160,17 @@ class ODRFilePlayer(Gtk.Window):
         for index, track in enumerate(self.playlist):
             source_label = str(getattr(track, "source_label", "") or "").strip()
             source_label_manual = bool(getattr(track, "source_label_manual", False))
-            if not getattr(track, "manual_metadata", False) and not source_label_manual:
+            default_source_label = self._default_source_label_for_path(track.path)
+            source_label_needs_persist = bool(
+                source_label
+                and is_stream_url(track.path)
+                and source_label != default_source_label
+            )
+            if (
+                not getattr(track, "manual_metadata", False)
+                and not source_label_manual
+                and not source_label_needs_persist
+            ):
                 continue
             overrides[str(index)] = {
                 "artist": track.artist,
