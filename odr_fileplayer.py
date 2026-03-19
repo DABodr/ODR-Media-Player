@@ -923,16 +923,7 @@ class ODRFilePlayer(Gtk.Window):
                         else:
                             override = playlist_overrides.get(str(next_emit_index))
                             if isinstance(override, dict):
-                                track.artist = str(override.get("artist", "") or "")
-                                track.title = str(override.get("title", "") or "")
-                                track.album = str(override.get("album", "") or "")
-                                track.source_label = str(override.get("source_label", "") or "")
-                                track.source_label_manual = bool(override.get("source_label_manual", False))
-                                if track.source_label and not track.title and is_stream_url(track.path):
-                                    track.title = track.source_label
-                                track.manual_metadata = True
-                                if not (track.artist or track.title or track.album):
-                                    track.manual_metadata = False
+                                self._apply_playlist_override(track, override)
                             emit_batch.append(track)
                             emitted_count += 1
                         next_emit_index += 1
@@ -969,16 +960,7 @@ class ODRFilePlayer(Gtk.Window):
                 else:
                     override = playlist_overrides.get(str(next_emit_index))
                     if isinstance(override, dict):
-                        track.artist = str(override.get("artist", "") or "")
-                        track.title = str(override.get("title", "") or "")
-                        track.album = str(override.get("album", "") or "")
-                        track.source_label = str(override.get("source_label", "") or "")
-                        track.source_label_manual = bool(override.get("source_label_manual", False))
-                        if track.source_label and not track.title and is_stream_url(track.path):
-                            track.title = track.source_label
-                        track.manual_metadata = True
-                        if not (track.artist or track.title or track.album):
-                            track.manual_metadata = False
+                        self._apply_playlist_override(track, override)
                     emit_batch.append(track)
                     emitted_count += 1
                 next_emit_index += 1
@@ -1020,6 +1002,39 @@ class ODRFilePlayer(Gtk.Window):
             source_label=title_hint,
             source_label_manual=False,
         )
+
+    def _apply_playlist_override(self, track, override):
+        if not isinstance(override, dict):
+            return
+
+        raw_artist = str(override.get("artist", "") or "")
+        raw_title = str(override.get("title", "") or "")
+        raw_album = str(override.get("album", "") or "")
+        track.source_label = str(override.get("source_label", "") or "")
+        track.source_label_manual = bool(override.get("source_label_manual", False))
+
+        manual_metadata = bool(override.get("manual_metadata", False))
+        if not manual_metadata and not self._is_live_playlist_track(track):
+            manual_metadata = bool(raw_artist or raw_title or raw_album)
+
+        if manual_metadata:
+            track.artist = raw_artist
+            track.title = raw_title
+            track.album = raw_album
+        else:
+            if self._is_live_playlist_track(track):
+                track.artist = ""
+                track.title = ""
+                track.album = ""
+            else:
+                track.artist = raw_artist
+                track.title = raw_title
+                track.album = raw_album
+
+        if track.source_label and not track.title and is_stream_url(track.path):
+            track.title = track.source_label
+
+        track.manual_metadata = manual_metadata
 
     def _default_source_label_for_path(self, path):
         if is_pulse_monitor_source(path):
@@ -2889,7 +2904,8 @@ class ODRFilePlayer(Gtk.Window):
         self._stop_player()
 
         if delay <= 0.0:
-            return self._run_live_player_recovery(current_idx, current_path, reason)
+            self._run_live_player_recovery(current_idx, current_path, reason)
+            return True
 
         self._cancel_pending_player_recovery()
         wait_seconds = max(1, int(delay + 0.999))
@@ -4173,11 +4189,12 @@ class ODRFilePlayer(Gtk.Window):
             ):
                 continue
             overrides[str(index)] = {
-                "artist": track.artist,
-                "title": track.title,
-                "album": track.album,
+                "artist": track.artist if getattr(track, "manual_metadata", False) else "",
+                "title": track.title if getattr(track, "manual_metadata", False) else "",
+                "album": track.album if getattr(track, "manual_metadata", False) else "",
                 "source_label": source_label,
                 "source_label_manual": source_label_manual,
+                "manual_metadata": bool(getattr(track, "manual_metadata", False)),
             }
         return overrides
 

@@ -159,6 +159,7 @@ def _load_playlist_overrides(value):
             "album": str(item.get("album", "") or ""),
             "source_label": str(item.get("source_label", "") or ""),
             "source_label_manual": bool(item.get("source_label_manual", False)),
+            "manual_metadata": bool(item.get("manual_metadata", False)),
         }
     return normalized
 
